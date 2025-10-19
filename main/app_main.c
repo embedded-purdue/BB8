@@ -16,14 +16,14 @@ static const char *TAG = "APP";
 void app_main(void) {
     ESP_LOGI(TAG, "FormSync FW starting");
 
-    // Init I2C (SDA=21, SCL=22 @ 100kHz for BNO055 compatibility)
-    ESP_ERROR_CHECK(bus_i2c_init(I2C_NUM_0, 21, 22, 100000));
+    // // Init I2C (SDA=21, SCL=22 @ 100kHz for BNO055 compatibility)
+    // ESP_ERROR_CHECK(bus_i2c_init(I2C_NUM_0, 21, 22, 100000));
 
-    // Init BNO055 IMU (with improved timeout handling)
-    ESP_ERROR_CHECK(bno055_init(I2C_NUM_0, BNO055_ADDR_A));
+    // // Init BNO055 IMU (with improved timeout handling)
+    // ESP_ERROR_CHECK(bno055_init(I2C_NUM_0, BNO055_ADDR_A));
 
-    // Init serial streaming
-    ESP_ERROR_CHECK(serial_stream_init());
+    // // Init serial streaming
+    // ESP_ERROR_CHECK(serial_stream_init());
 
     ESP_LOGI(TAG, "All systems initialized, starting real-time IMU streaming via serial");
 
@@ -31,7 +31,7 @@ void app_main(void) {
     const TickType_t period = pdMS_TO_TICKS(20); // 50Hz sampling (reduced for BNO055 stability)
 
     while (1) {
-        bno055_sample_t s;
+        // bno055_sample_t s;
         // esp_err_t err = bno055_read_sample(I2C_NUM_0, BNO055_ADDR_A, &s);
         // if (err == ESP_OK) {
         //     // Log BNO055 data with calibration status
@@ -56,7 +56,7 @@ void app_main(void) {
         //     ESP_LOGW(TAG, "BNO055 read failed: %s", esp_err_to_name(err));
             // }
 
-    print(test(5.0));
+    printf("%lf", test(5.0));
     vTaskDelayUntil(&t0, period);
     }
 
