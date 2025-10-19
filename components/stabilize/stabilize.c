@@ -6,34 +6,31 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 
-int Kp = 0;
-int Ki = 0;
-int Kd = 0;
+float Kp = 1;         // proportional gain
+float Ki = 1;         // integral gain
+float Kd = 1;         // derivative gain
+float dt = 1;         // sample period (seconds)
 
-// double calculateFB(bno055_sample_t s) {
-//     PID pidFB; //forward backward
 
-//     pidFB.errorAngle = s.pitch; 
-//     pidFB.derivative = s.gx;
-//     // pidFB.integral += s.pitch * pidFB.dt; 
+double calculateFB(bno055_sample_t s, PID pidFB) {
 
-//     // pidFB.response = Kp * pidFB.errorAngle + Ki * pidFB.integral + Kd * pidFB.derivative;
+    pidFB.errorAngle = s.pitch; 
+    pidFB.derivative = s.gx;
+    pidFB.integral += s.pitch * dt; 
 
-//     return pidFB.response;
-// }
+    double response = Kp * pidFB.errorAngle + Ki * pidFB.integral + Kd * pidFB.derivative;
 
-// double calculateLR(bno055_sample_t s) {
-//     PID pidLR; // left right  
-
-//     pidLR.errorAngle = s.pitch; 
-//     pidLR.derivative = s.gx;
-//     // pidLR.integral += s.pitch * pidLR.dt; 
-
-//     // pidLR.response = Kp * pidLR.errorAngle + Ki * pidLR.integral + Kd * pidLR.derivative;
-
-//     return pidLR.response;
-//}
-
-double test(double x) {
-    return x * 2;
+    return response;
 }
+
+double calculateLR(bno055_sample_t s, PID pidLR) {
+
+    pidLR.errorAngle = s.pitch; 
+    pidLR.derivative = s.gx;
+    pidLR.integral += s.pitch * dt; 
+
+    double response = Kp * pidLR.errorAngle + Ki * pidLR.integral + Kd * pidLR.derivative;
+
+    return response;
+}
+
