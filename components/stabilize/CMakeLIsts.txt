@@ -1,0 +1,6 @@
+idf_component_register(
+    SRCS "stabilize.c"
+    INCLUDE_DIRS "include"
+    REQUIRES imu_bno055        # <-- this line tells ESP-IDF we depend on bno055
+
+)

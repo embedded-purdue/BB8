@@ -9,6 +9,7 @@
 #include "bno055.h"
 #include "serial_stream.h"
 #include "motor_driver.h"
+#include "stabilize.h"
 
 static const char *TAG = "APP";
 
@@ -89,6 +90,10 @@ void app_main(void) {
     TickType_t t0 = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(20); // 50Hz sampling (reduced for BNO055 stability)
 
+    PID pidFB;
+    PID pidLR;
+    pidFB.integral = 0;
+    pidLR.integral = 0;
     while (1) {
         bno055_sample_t s;
         esp_err_t err = bno055_read_sample(I2C_NUM_0, BNO055_ADDR_A, &s);
@@ -98,7 +103,7 @@ void app_main(void) {
                         (unsigned) s.t_ms, s.ax, s.ay, s.az, s.gx, s.gy, s.gz, 
                         s.mx, s.my, s.mz, s.roll, s.pitch, s.yaw,
                         s.sys_cal, s.gyro_cal, s.accel_cal, s.mag_cal);
-
+            
             // Get motor encoder data
             int32_t encoder_count = motor_driver_get_encoder_count(&motor_handle);
             
@@ -113,9 +118,13 @@ void app_main(void) {
                 encoder_count);
             
             serial_stream_send_data(json_data);
+            printf("%lf\n", calculateFB(s, pidFB, &pidFB.integral));
+            printf("%lf\n\n\n\n\n", calculateLR(s, pidLR, &pidLR.integral));
         } else {
             ESP_LOGW(TAG, "BNO055 read failed: %s", esp_err_to_name(err));
         }
-        vTaskDelayUntil(&t0, period);
+
+        vTaskDelayUntil(&t0, pdMS_TO_TICKS(100));
     }
+
 }
