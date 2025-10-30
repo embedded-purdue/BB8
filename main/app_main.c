@@ -55,7 +55,7 @@ static void motor_control_task(void *pvParameters) {
 }
 
 void app_main(void) {
-    ESP_LOGI(TAG, "FormSync FW starting");
+    ESP_LOGI(TAG, "BB8 FW starting");
 
     // Init I2C (SDA=21, SCL=22 @ 100kHz for BNO055 compatibility)
     ESP_ERROR_CHECK(bus_i2c_init(I2C_NUM_0, 21, 22, 100000));
