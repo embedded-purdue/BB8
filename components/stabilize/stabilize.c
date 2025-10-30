@@ -7,29 +7,29 @@
 #include "esp_system.h"
 
 float Kp = 1;         // proportional gain
-float Ki = 1;         // integral gain
+float Ki = 0;         // integral gain
 float Kd = 1;         // derivative gain
-float dt = 1;         // sample period (seconds)
+float dt = .1;         // sample period (seconds)
 
 
-double calculateFB(bno055_sample_t s, PID pidFB) {
+double calculateFB(bno055_sample_t s, PID pidFB, float *integral) {
 
     pidFB.errorAngle = s.pitch; 
-    pidFB.derivative = s.gx;
-    pidFB.integral += s.pitch * dt; 
+    pidFB.derivative = s.gy;
+    *integral += s.pitch * dt; 
 
-    double response = Kp * pidFB.errorAngle + Ki * pidFB.integral + Kd * pidFB.derivative;
+    double response = Kp * pidFB.errorAngle + Ki * *integral + Kd * pidFB.derivative;
 
     return response;
 }
 
-double calculateLR(bno055_sample_t s, PID pidLR) {
+double calculateLR(bno055_sample_t s, PID pidLR, float *integral) {
 
-    pidLR.errorAngle = s.pitch; 
-    pidLR.derivative = s.gx;
-    pidLR.integral += s.pitch * dt; 
+    pidLR.errorAngle = s.roll; 
+    pidLR.derivative = s.gy;
+    *integral += s.pitch * dt; 
 
-    double response = Kp * pidLR.errorAngle + Ki * pidLR.integral + Kd * pidLR.derivative;
+    double response = Kp * pidLR.errorAngle + Ki * *integral + Kd * pidLR.derivative;
 
     return response;
 }

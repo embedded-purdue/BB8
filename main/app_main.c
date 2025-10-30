@@ -31,8 +31,9 @@ void app_main(void) {
     const TickType_t period = pdMS_TO_TICKS(20); // 50Hz sampling (reduced for BNO055 stability)
 
     PID pidFB;
-    // PID pidLR;
+    PID pidLR;
     pidFB.integral = 0;
+    pidLR.integral = 0;
     while (1) {
         bno055_sample_t s;
         esp_err_t err = bno055_read_sample(I2C_NUM_0, BNO055_ADDR_A, &s);
@@ -54,12 +55,13 @@ void app_main(void) {
                 s.sys_cal, s.gyro_cal, s.accel_cal, s.mag_cal);
             
             serial_stream_send_data(json_data);
-            printf("%lf\n\n\n\n\n", calculateFB(s, pidFB));
+            printf("%lf\n", calculateFB(s, pidFB, &pidFB.integral));
+            printf("%lf\n\n\n\n\n", calculateLR(s, pidLR, &pidLR.integral));
         } else {
             ESP_LOGW(TAG, "BNO055 read failed: %s", esp_err_to_name(err));
         }
 
-    vTaskDelayUntil(&t0, period);
+        vTaskDelayUntil(&t0, pdMS_TO_TICKS(100));
     }
 
 }

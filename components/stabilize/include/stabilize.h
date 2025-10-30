@@ -15,8 +15,8 @@ typedef struct {
     //float time;       // optional elapsed time accumulator
 } PID;
 
-double calculateLR(bno055_sample_t s, PID pidFB);
-double calculateFB(bno055_sample_t s, PID pidLR);
+double calculateLR(bno055_sample_t s, PID pidFB, float *);
+double calculateFB(bno055_sample_t s, PID pidLR, float *);
 
 
 
