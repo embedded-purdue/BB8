@@ -1,24 +1,26 @@
 #include <stdbool.h>
 #include <stdint.h>
-#include "bno055.h"  // for bno055_sample_t
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct {
-
-    float errorAngle; // current error (e.g., pitch or roll angle)
-    float integral;   // integral accumulator
-    float derivative; // measured or computed derivative (e.g., gx in rad/s)
-
-    //float time;       // optional elapsed time accumulator
-} PID;
-
-double calculateLR(bno055_sample_t s, PID pidFB, float *);
-double calculateFB(bno055_sample_t s, PID pidLR, float *);
-
-
+/**
+ * @brief Calculate head compensation to keep head upright when BB8 body tilts
+ * 
+ * This is used for head stabilization - when BB8 rolls/tilts, the motor
+ * compensates to keep the head pointing upright (90° from horizontal).
+ * 
+ * @param bb8_tilt_angle BB8 body tilt angle in degrees (positive = forward tilt)
+ * @param bb8_tilt_rate BB8 body angular velocity in rad/s (rotation rate)
+ * @param integral Pointer to integral accumulator (maintain state between calls)
+ * @return float Motor compensation output (-100 to +100)
+ * 
+ * Example:
+ *   BB8 tilts forward +10° → compensation = -10 (motor moves head backward)
+ *   BB8 tilts backward -5° → compensation = +5 (motor moves head forward)
+ */
+float calculate_head_compensation(float bb8_tilt_angle, float bb8_tilt_rate, float *integral);
 
 #ifdef __cplusplus
 }

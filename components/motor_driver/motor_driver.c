@@ -46,11 +46,14 @@ esp_err_t motor_driver_init(const motor_driver_config_t *config, motor_driver_ha
     handle->encoder_count = 0;
     handle->encoder_enabled = (config->encoder_a_pin != GPIO_NUM_NC && config->encoder_b_pin != GPIO_NUM_NC);
     
-    // Configure direction pin
+    // Reset and configure direction pin
+    // IMPORTANT: Reset pin first to clear any previous configuration
+    gpio_reset_pin(config->dir_pin);
+    
     gpio_config_t dir_gpio_config = {
         .pin_bit_mask = (1ULL << config->dir_pin),
         .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE,   // enable pull-up to help drive HIGH
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
@@ -60,8 +63,17 @@ esp_err_t motor_driver_init(const motor_driver_config_t *config, motor_driver_ha
         return ret;
     }
     
-    // Set initial direction
+    // Explicitly set direction to output (redundant but ensures it's set)
+    gpio_set_direction(config->dir_pin, GPIO_MODE_OUTPUT);
+
+    // Increase drive capability to strongest to overcome external pulls
+    gpio_set_drive_capability(config->dir_pin, GPIO_DRIVE_CAP_3);
+    
+    // Set initial direction to LOW (forward)
     gpio_set_level(config->dir_pin, MOTOR_DIR_FORWARD);
+    
+    // Initial log without read-back (some boards can't read outputs reliably)
+    ESP_LOGI(TAG, "Direction pin %d initialized to LOW", config->dir_pin);
     
     // Configure PWM timer
     ledc_timer_config_t timer_config = {
@@ -144,34 +156,77 @@ esp_err_t motor_driver_set_speed(motor_driver_handle_t *handle, int8_t speed) {
     if (speed > 100) speed = 100;
     if (speed < -100) speed = -100;
     
-    // Set direction based on speed sign
+    // Calculate PWM duty cycle
+    uint32_t duty = 0;
+    if (speed != 0) {
+        uint32_t abs_speed = (speed < 0) ? -speed : speed;
+        duty = (handle->config.max_pwm_duty * abs_speed) / 100;
+        // Ensure minimum duty for motors that need it (some motors won't start at very low PWM)
+        // But for now, we'll trust the calculation - add minimum only if motor doesn't respond
+    }
+    
+    // CRITICAL: Set direction BEFORE PWM to ensure proper sequencing
+    // Direction change must happen before PWM is applied
     motor_direction_t direction = (speed >= 0) ? MOTOR_DIR_FORWARD : MOTOR_DIR_BACKWARD;
     esp_err_t ret = motor_driver_set_direction(handle, direction);
     if (ret != ESP_OK) {
         return ret;
     }
     
-    // Calculate PWM duty cycle
-    uint32_t duty = 0;
-    if (speed != 0) {
-        uint32_t abs_speed = (speed < 0) ? -speed : speed;
-        duty = (handle->config.max_pwm_duty * abs_speed) / 100;
+    // Now set PWM duty cycle
+    if (duty == 0) {
+        // Stop motor: set PWM duty to 0
+        ret = ledc_set_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel, 0);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set PWM duty to 0: %s", esp_err_to_name(ret));
+            return ret;
+        }
+        ret = ledc_update_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to update PWM duty to 0: %s", esp_err_to_name(ret));
+            return ret;
+        }
     }
     
-    // Set PWM duty cycle
-    ret = ledc_set_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel, duty);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set PWM duty: %s", esp_err_to_name(ret));
-        return ret;
+    // Set PWM duty cycle (only if not zero - already handled above)
+    if (duty > 0) {
+        // Ensure PWM timer is running first
+        ret = ledc_timer_resume(LEDC_LOW_SPEED_MODE, handle->config.pwm_timer);
+        if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+            ESP_LOGD(TAG, "PWM timer resume: %s (expected if already running)", esp_err_to_name(ret));
+        }
+        
+        ret = ledc_set_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel, duty);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set PWM duty: %s", esp_err_to_name(ret));
+            return ret;
+        }
+        
+        ret = ledc_update_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to update PWM duty: %s", esp_err_to_name(ret));
+            return ret;
+        }
+        
+        // Small delay to allow hardware to update (a few CPU cycles)
+        volatile int delay_counter = 20;
+        while (delay_counter-- > 0) {
+            __asm__ __volatile__("nop");
+        }
+        
+        // Optional read-back (disabled warnings to avoid confusion due to timing)
+        (void) ledc_get_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel);
     }
     
-    ret = ledc_update_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to update PWM duty: %s", esp_err_to_name(ret));
-        return ret;
+    // Log motor state changes (not just debug level)
+    if (speed == 0) {
+        ESP_LOGI(TAG, "Motor STOPPED: speed=0%%, duty=0, dir_pin=%d", handle->config.dir_pin);
+    } else {
+        uint32_t actual_duty = ledc_get_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel);
+        ESP_LOGI(TAG, "Motor MOVING: speed=%d%%, duty=%lu/%lu (actual=%lu), dir_pin=%d=%s, pwm_pin=%d", 
+               speed, duty, handle->config.max_pwm_duty, actual_duty, handle->config.dir_pin,
+               (direction == MOTOR_DIR_FORWARD) ? "HIGH" : "LOW", handle->config.pwm_pin);
     }
-    
-    ESP_LOGD(TAG, "Motor speed set to %d%% (duty: %lu)", speed, duty);
     return ESP_OK;
 }
 
@@ -180,18 +235,51 @@ esp_err_t motor_driver_set_direction(motor_driver_handle_t *handle, motor_direct
         return ESP_ERR_INVALID_ARG;
     }
     
-    esp_err_t ret = gpio_set_level(handle->config.dir_pin, direction);
+    // Read current state before changing (for debugging)
+    int prev_level = -1; // skip unreliable read-back on some boards
+    
+    // CRITICAL: Do NOT call gpio_set_direction here - it's already configured in init
+    // Calling it repeatedly can cause issues. Just set the level directly.
+    
+    // Invert polarity: FORWARD -> HIGH, BACKWARD -> LOW
+    int level = (direction == MOTOR_DIR_FORWARD) ? 1 : 0;
+    esp_err_t ret = gpio_set_level(handle->config.dir_pin, level);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set direction: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to set direction level: %s", esp_err_to_name(ret));
         return ret;
     }
     
-    ESP_LOGD(TAG, "Motor direction set to %s", (direction == MOTOR_DIR_FORWARD) ? "FORWARD" : "BACKWARD");
+    // Do not verify read-back: some boards can't read output state reliably on strap pins
+    ESP_LOGD(TAG, "Motor direction: %s (pin=%d, requested_level=%d)", 
+             (direction == MOTOR_DIR_FORWARD) ? "FORWARD" : "BACKWARD",
+             handle->config.dir_pin, level);
     return ESP_OK;
 }
 
 esp_err_t motor_driver_stop(motor_driver_handle_t *handle) {
-    return motor_driver_set_speed(handle, 0);
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Explicitly set PWM duty to 0 and update
+    // NOTE: No delays - may be called from interrupt/event context
+    esp_err_t ret = ledc_set_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set PWM duty to 0: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ret = ledc_update_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update PWM duty to 0: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Update again immediately (no delay)
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, handle->config.pwm_channel);
+    
+    ESP_LOGD(TAG, "Motor STOPPED - pwm_pin=%d duty=0", handle->config.pwm_pin);
+    return ESP_OK;
 }
 
 int32_t motor_driver_get_encoder_count(motor_driver_handle_t *handle) {
