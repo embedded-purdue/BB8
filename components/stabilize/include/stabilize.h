@@ -1,27 +1,45 @@
+#pragma once
+
 #include <stdbool.h>
 #include <stdint.h>
-#include "bno055.h"  // for bno055_sample_t
+#include "bno055.h"     // for bno055_sample_t
+#include "QuickPID.h"  
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct {
+/**
+ * @brief Initializes the PID controllers for stabilization.
+ * Call this ONCE at startup.
+ */
+void stabilize_init(void);
 
-    float errorAngle; // current error (e.g., pitch or roll angle)
-    float integral;   // integral accumulator
-    float derivative; // measured or computed derivative (e.g., gx in rad/s)
+/**
+ * @brief Calculates the stabilization response for the Pitch (Front/Back) axis.
+ * @param s The BNO055 sensor sample.
+ * @return The calculated PID response (e.g., motor adjustment).
+ */
+double calculateFB(bno055_sample_t s);
 
-    //float time;       // optional elapsed time accumulator
-} PID;
+/**
+ * @brief Calculates the stabilization response for the Roll (Left/Right) axis.
+ * @param s The BNO055 sensor sample.
+ * @return The calculated PID response (e.g., motor adjustment).
+ */
+double calculateLR(bno055_sample_t s);
 
-double calculateLR(bno055_sample_t s, PID pidFB, float *);
-double calculateFB(bno055_sample_t s, PID pidLR, float *);
+/**
+ * @brief Sets new tunings for the Pitch (FB) controller at runtime.
+ */
+void stabilize_set_fb_tunings(float kp, float ki, float kd);
 
+/**
+ * @brief Sets new tunings for the Roll (LR) controller at runtime.
+ */
+void stabilize_set_lr_tunings(float kp, float ki, float kd);
 
 
 #ifdef __cplusplus
 }
 #endif
-
-
