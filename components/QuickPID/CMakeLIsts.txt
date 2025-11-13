@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "quickpid.c"
+    SRCS "QuickPID.c" "quickpid.c"
     REQUIRES esp_timer
     INCLUDE_DIRS "include"
 )

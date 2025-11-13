@@ -23,11 +23,11 @@ void stabilize_init(void) {
     // --- Define tuning parameters here ---
     float fb_kp = 1.0;
     float fb_ki = 0.0;
-    float fb_kd = 1.0;
+    float fb_kd = 0.0; // changed from 1 to 0
 
     float lr_kp = 1.0;
     float lr_ki = 0.0;
-    float lr_kd = 1.0;
+    float lr_kd = 0.0; //changed from 1 to 0
 
     /*
      * Initialize the Pitch (FB) PID controller:
