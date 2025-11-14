@@ -154,12 +154,9 @@ static void bb8_platform_on_controller_data(uni_hid_device_t* d, uni_controller_
     }
     
     // RIGHT joystick Y-axis: Forward/Backward speed (vy)
-    // Some controllers/firmwares report forward/back on left Y instead of right Y.
-    // Use whichever stick (right Y or left Y) has the larger magnitude as a fallback.
-    int32_t axis_ry_raw = gp->axis_ry;  // Right stick Y (preferred)
-    int32_t axis_y_raw  = gp->axis_y;   // Left stick Y (fallback if right Y is zero)
-    int32_t axis_y_chosen_raw = (abs(axis_ry_raw) >= abs(axis_y_raw)) ? axis_ry_raw : axis_y_raw;
-    int32_t axis_y = -axis_y_chosen_raw;  // Invert: UP becomes positive, DOWN becomes negative
+    // Strict mapping: Right stick controls speed. UP = forward, DOWN = backward.
+    int32_t axis_ry_raw = gp->axis_ry;  // Right stick Y
+    int32_t axis_y = -axis_ry_raw;  // Invert: UP becomes positive, DOWN becomes negative
     int8_t vy = 0;
     if (axis_y > DEAD_ZONE) {
         // Pushed UP: Forward
