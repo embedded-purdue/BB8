@@ -87,8 +87,8 @@ static uni_error_t bb8_platform_on_device_ready(uni_hid_device_t* d) {
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "CONTROLLER READY!");
     ESP_LOGI(TAG, "BB8 Omniwheel Control:");
-    ESP_LOGI(TAG, "  - LEFT JOYSTICK = Rotation/Direction (X-axis: left/right)");
-    ESP_LOGI(TAG, "  - RIGHT JOYSTICK Y = Forward/Backward speed");
+    ESP_LOGI(TAG, "  - RIGHT JOYSTICK X = Rotation/Direction (left/right)");
+    ESP_LOGI(TAG, "  - LEFT JOYSTICK Y = Forward/Backward speed");
     ESP_LOGI(TAG, "    * Push UP (positive Y) = Forward");
     ESP_LOGI(TAG, "    * Push DOWN (negative Y) = Backward");
     ESP_LOGI(TAG, "========================================");
@@ -108,9 +108,9 @@ static void bb8_platform_on_controller_data(uni_hid_device_t* d, uni_controller_
     // OMNIWHEEL CONTROL: Map joysticks to omniwheel velocities
     // ========================================================================
     // Control scheme for BB8 omniwheel system (based on image formulas):
-    //   - LEFT JOYSTICK X = Rotation component (vr)
-    //   - RIGHT JOYSTICK Y = Forward/Backward component (vy)
-    //   - No strafing for now (vx = 0) - can be added later with left joystick Y
+    //   - RIGHT JOYSTICK X = Rotation component (vr)
+    //   - LEFT JOYSTICK Y = Forward/Backward component (vy)
+    //   - No strafing for now (vx = 0)
     // 
     // The omniwheel kinematics calculate motor speeds for BB8:
     //   - Motor 0 (A, Front-Right, 45°):  vy + vx + vr = vy + vr (since vx=0)
@@ -136,37 +136,38 @@ static void bb8_platform_on_controller_data(uni_hid_device_t* d, uni_controller_
     // No strafing for now (can add later with left joystick Y if needed)
     int8_t vx = 0;
     
-    // LEFT joystick X-axis: Rotation/Direction (vr)
-    // Invert direction so pushing LEFT rotates left (CCW), RIGHT rotates right (CW)
-    int32_t axis_lx_raw = gp->axis_x;
-    int32_t axis_lx = -axis_lx_raw;  // Invert: LEFT becomes positive (CCW), RIGHT negative (CW)
+    // RIGHT joystick X-axis: Rotation/Direction (vr)
+    // Keep same sense as earlier LEFT stick mapping:
+    //   push LEFT -> rotate left (CCW), push RIGHT -> rotate right (CW)
+    int32_t axis_rx_raw = gp->axis_rx;
+    int32_t axis_rx = -axis_rx_raw;  // Invert so LEFT gives positive vr (CCW), RIGHT negative (CW)
     int8_t vr = 0;
-    if (axis_lx > DEAD_ZONE) {
-        int32_t axis_offset = axis_lx - DEAD_ZONE;
+    if (axis_rx > DEAD_ZONE) {
+        int32_t axis_offset = axis_rx - DEAD_ZONE;
         vr = (int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
         if (vr > 100) vr = 100;
         if (vr < 1) vr = 1;
-    } else if (axis_lx < -DEAD_ZONE) {
-        int32_t axis_offset = -(axis_lx + DEAD_ZONE);
+    } else if (axis_rx < -DEAD_ZONE) {
+        int32_t axis_offset = -(axis_rx + DEAD_ZONE);
         vr = -(int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
         if (vr < -100) vr = -100;
         if (vr > -1) vr = -1;
     }
     
-    // RIGHT joystick Y-axis: Forward/Backward speed (vy)
-    // Strict mapping: Right stick controls speed. UP = forward, DOWN = backward.
-    int32_t axis_ry_raw = gp->axis_ry;  // Right stick Y
-    int32_t axis_y = -axis_ry_raw;  // Invert: UP becomes positive, DOWN becomes negative
+    // LEFT joystick Y-axis: Forward/Backward speed (vy)
+    // UP = forward, DOWN = backward.
+    int32_t axis_ly_raw = gp->axis_y;  // Left stick Y
+    int32_t axis_ly = -axis_ly_raw;  // Invert: UP becomes positive, DOWN becomes negative
     int8_t vy = 0;
-    if (axis_y > DEAD_ZONE) {
+    if (axis_ly > DEAD_ZONE) {
         // Pushed UP: Forward
-        int32_t axis_offset = axis_y - DEAD_ZONE;
+        int32_t axis_offset = axis_ly - DEAD_ZONE;
         vy = (int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
         if (vy > 100) vy = 100;
         if (vy < 1) vy = 1;
-    } else if (axis_y < -DEAD_ZONE) {
+    } else if (axis_ly < -DEAD_ZONE) {
         // Pushed DOWN: Backward
-        int32_t axis_offset = -(axis_y + DEAD_ZONE);
+        int32_t axis_offset = -(axis_ly + DEAD_ZONE);
         vy = -(int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
         if (vy < -100) vy = -100;
         if (vy > -1) vy = -1;
@@ -259,7 +260,7 @@ void app_main(void) {
     // Configure omniwheel system
     // CURRENT SETUP: 2 motors only (based on image formulas)
     //   - Motor 0 (A): Front-Right at 45° - formula: (y + x + r)
-    //   - Motor 1 (B): Front-Left at 135° - formula: (y - x - r)
+    //   - Motor 1 (B): Front-Left at 135° - formula: (y - x + r)
     // NOTE: Each motor MUST have separate GPIO pins for independent control
     //       If motors share GPIO pins, they will move together (not independent)
     // 
@@ -333,8 +334,8 @@ void app_main(void) {
     ESP_LOGI(TAG, "  - Motor 3 (D): Back-Right at 315° - GPIO 16 (dir), GPIO 17 (PWM)");
     ESP_LOGI(TAG, "    Formula: (-y + x + r) - Backward + Right + Rotation");
     ESP_LOGI(TAG, "When connected:");
-    ESP_LOGI(TAG, "  - LEFT JOYSTICK X = Rotation component (vr)");
-    ESP_LOGI(TAG, "  - RIGHT JOYSTICK Y = Forward/Backward component (vy)");
+    ESP_LOGI(TAG, "  - RIGHT JOYSTICK X = Rotation component (vr)");
+    ESP_LOGI(TAG, "  - LEFT JOYSTICK Y = Forward/Backward component (vy)");
     ESP_LOGI(TAG, "    * Push UP = Forward");
     ESP_LOGI(TAG, "    * Push DOWN = Backward");
     ESP_LOGI(TAG, "NOTE: Position motors at 45° (A), 135° (B), 225° (C), 315° (D) angles");
