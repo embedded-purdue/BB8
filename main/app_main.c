@@ -137,10 +137,9 @@ static void bb8_platform_on_controller_data(uni_hid_device_t* d, uni_controller_
     int8_t vx = 0;
     
     // RIGHT joystick X-axis: Rotation/Direction (vr)
-    // Keep same sense as earlier LEFT stick mapping (no inversion):
-    //   push RIGHT -> positive vr (CW), push LEFT -> negative vr (CCW)
+    // Invert mapping to match expected rotation direction on hardware
     int32_t axis_rx_raw = gp->axis_rx;
-    int32_t axis_rx = axis_rx_raw;  // No inversion
+    int32_t axis_rx = -axis_rx_raw;  // Invert
     int8_t vr = 0;
     if (axis_rx > DEAD_ZONE) {
         int32_t axis_offset = axis_rx - DEAD_ZONE;
