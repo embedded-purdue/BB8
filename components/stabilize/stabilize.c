@@ -15,7 +15,7 @@ float inputLRDerivative; //to store the gyroscope movement for LR
 static float inputFB, outputFB, setpointFB;
 static float inputLR, outputLR, setpointLR;
 
-float radToDeg = 180.0f * M_PI;
+static const float radToDeg = 180.0f / (float)M_PI;
 //static const float radToDeg = 57.29577951308232f; another way to do that ^^
 
 
@@ -111,7 +111,8 @@ double calculateFB(bno055_sample_t s) {
     float qy = s.qy;
     float qz = s.qz;
 
-    float sinp = 2.0f * (qw*qx + qy*qz);
+    // float sinp = 2.0f * (qw*qx + qy*qz);
+    float sinp = 2.0f * (qw*qy - qz*qx);
     //safety checks in the rare case float precision causes or code to break
     if (sinp >  1.0f) sinp =  1.0f;
     if (sinp < -1.0f) sinp = -1.0f;
