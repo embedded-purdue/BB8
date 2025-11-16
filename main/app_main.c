@@ -70,6 +70,9 @@ static void bb8_platform_on_device_connected(uni_hid_device_t* d) {
     ESP_LOGI(TAG, "CONTROLLER CONNECTED!");
     ESP_LOGI(TAG, "========================================");
     controller_connected = true;
+    // Stop scanning and disallow new incoming connections to reduce RF churn
+    uni_bt_stop_scanning_safe();
+    uni_bt_allow_incoming_connections(false);
     // Ensure all motors are stopped when controller connects
     omniwheel_system_stop(&omniwheel_handle);
 }
@@ -80,6 +83,9 @@ static void bb8_platform_on_device_disconnected(uni_hid_device_t* d) {
     controller_connected = false;
     // Stop all motors when controller disconnects
     omniwheel_system_stop(&omniwheel_handle);
+    // Resume scanning to allow reconnection
+    uni_bt_allow_incoming_connections(true);
+    uni_bt_start_scanning_and_autoconnect_safe();
 }
 
 static uni_error_t bb8_platform_on_device_ready(uni_hid_device_t* d) {
