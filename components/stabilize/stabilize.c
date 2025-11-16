@@ -1,5 +1,6 @@
 #include "stabilize.h"
 #include <stdio.h>
+#include <math.h>
 
 
 // PID controller instance for Front/Back (Pitch)
@@ -7,9 +8,15 @@ static QuickPID_t pidFB;
 // PID controller instance for Left/Right (Roll)
 static QuickPID_t pidLR;
 
+float inputFBDerivative; //to store the gyroscope movement for FB
+float inputLRDerivative; //to store the gyroscope movement for LR
+
 // Variables to link to the PID controllers
 static float inputFB, outputFB, setpointFB;
 static float inputLR, outputLR, setpointLR;
+
+float radToDeg = 180.0f * M_PI;
+//static const float radToDeg = 57.29577951308232f; another way to do that ^^
 
 
 /**
@@ -94,27 +101,55 @@ void stabilize_set_lr_tunings(float kp, float ki, float kd) {
  * @brief Calculates the stabilization response for the Pitch (Front/Back) axis.
  */
 double calculateFB(bno055_sample_t s) {
+    //REAL kd value (since kp is 0 at the top)
+    float kd = .4;
+
     // 1. Update the input variable with the new sensor reading
-    inputFB = s.pitch;
+    //quaternion values to use (more precise than IMU Euler angles)
+    float qw = s.qw;
+    float qx = s.qx;
+    float qy = s.qy;
+    float qz = s.qz;
+
+    float sinp = 2.0f * (qw*qx + qy*qz);
+    //safety checks in the rare case float precision causes or code to break
+    if (sinp >  1.0f) sinp =  1.0f;
+    if (sinp < -1.0f) sinp = -1.0f;
+    inputFB = asinf(sinp) * radToDeg; 
+
+    inputFBDerivative = s.gy;
 
     // 2. Compute the PID response.
     // The library handles timing, integral, and all calculations.
     QuickPID_Compute(&pidFB);
 
     // 3. Return the calculated output
-    return (double)outputFB;
+    return (double)(outputFB + kd * inputFBDerivative);
 }
 
 /**
  * @brief Calculates the stabilization response for the Roll (Left/Right) axis.
  */
 double calculateLR(bno055_sample_t s) {
+    //Another REAL kd value (since kp is 0 at the top)
+    float kd = .4;
+    
     // 1. Update the input variable with the new sensor reading
-    inputLR = s.roll;
+    //quaternion values to use (more precise than IMU Euler angles)
+    float qw = s.qw;
+    float qx = s.qx;
+    float qy = s.qy;
+    float qz = s.qz;
+
+    float sinr_cosp = 2.0f * (qw*qy - qz*qx);
+    float cosr_cosp = 1.0f - 2.0f * (qx*qx + qy*qy);
+    inputLR = atan2f(sinr_cosp, cosr_cosp) * radToDeg;
+
+    inputLRDerivative = s.gx;
 
     // 2. Compute the PID response
     QuickPID_Compute(&pidLR);
 
     // 3. Return the calculated output
-    return (double)outputLR;
+    return (double)(outputLR + kd * inputLRDerivative);
 }
