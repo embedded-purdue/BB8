@@ -140,7 +140,7 @@ void app_main(void) {
             //motor_driver_set_speed(&motor_handle, (int8_t)fb_response);
         
             // Log BNO055 data with calibration status
-            ESP_LOGI(TAG, "t=%u ax=%.3f ay=%.3f az=%.3f m/s^2 | gx=%.3f gy=%.3f gz=%.3f rad/s | mx=%.1f my=%.1f mz=%.1f μT | r=%.1f p=%.1f y=%.1f° | cal=%d%d%d%d",
+            ESP_LOGI(TAG, "t=%u ax=%.3f ay=%.3f az=%.3f m/s^2 | gx=%.3f gy=%.3f gz=%.3f rad/s | mx=%.1f my=%.1f mz=%.1f μT | r=%.1f p=%.1f y=%.1fgit° | cal=%d%d%d%d",
                         (unsigned) s.t_ms, s.ax, s.ay, s.az, s.gx, s.gy, s.gz, 
                         s.mx, s.my, s.mz, s.roll, s.pitch, s.yaw,
                         s.sys_cal, s.gyro_cal, s.accel_cal, s.mag_cal);
@@ -172,7 +172,7 @@ void app_main(void) {
             ESP_LOGW(TAG, "BNO055 read failed: %s", esp_err_to_name(err));
         }
 
-        vTaskDelayUntil(&t0, pdMS_TO_TICKS(100));
+        vTaskDelayUntil(&t0, pdMS_TO_TICKS(1000));
     }
 
 }

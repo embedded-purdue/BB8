@@ -124,6 +124,7 @@ double calculateFB(bno055_sample_t s) {
     QuickPID_Compute(&pidFB);
 
     // 3. Return the calculated output
+    // printf("outputFB=%.3f kd=%.3f inputFBDerivative=%.3f", outputFB, kd, inputFBDerivative);
     return (double)(outputFB + kd * inputFBDerivative);
 }
 
