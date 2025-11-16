@@ -15,6 +15,7 @@
 #include <btstack_run_loop.h>
 #include <btstack_stdio_esp32.h>
 #include "sdkconfig.h"
+#include "esp_bt.h"
 
 static const char *TAG = "APP";
 
@@ -236,6 +237,9 @@ void app_main(void) {
     btstack_stdio_init();
 #endif
 #endif
+
+    // Release BLE controller memory when using BR/EDR only to improve stability
+    esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
 
     // Initialize BTstack - MUST be called before uni_init()
     btstack_init();
