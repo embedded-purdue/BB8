@@ -134,24 +134,21 @@ double calculateFB(bno055_sample_t s) {
  */
 double calculateLR(bno055_sample_t s) {
     //Another REAL kd value (since kp is 0 at the top)
-    float kd = .4;
+    float kd = .4f;
     
-    // 1. Update the input variable with the new sensor reading
-    //quaternion values to use (more precise than IMU Euler angles)
     float qw = s.qw;
     float qx = s.qx;
     float qy = s.qy;
     float qz = s.qz;
 
-    float sinr_cosp = 2.0f * (qw*qy - qz*qx);
-    float cosr_cosp = 1.0f - 2.0f * (qx*qx + qy*qy);
+    // Correct roll (x-axis) from quaternion
+    float sinr_cosp = 2.0f * (qw * qx + qy * qz);
+    float cosr_cosp = 1.0f - 2.0f * (qx * qx + qy * qy);
     inputLR = atan2f(sinr_cosp, cosr_cosp) * radToDeg;
 
-    inputLRDerivative = s.gx;
+    inputLRDerivative = s.gx;   // assuming gx is the roll-rate axis for your mounting
 
-    // 2. Compute the PID response
     QuickPID_Compute(&pidLR);
 
-    // 3. Return the calculated output
     return (double)(outputLR + kd * inputLRDerivative);
 }
