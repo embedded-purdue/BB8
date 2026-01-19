@@ -19,8 +19,8 @@ static motor_driver_handle_t motor_handle;
     static float smoothed_pitch = 0.0f;
     static float smoothed_roll = 0.0f;
 
-    const float PITCH_OFFSET = -1.3; // Use the value from your log
-    const float ROLL_OFFSET  = 1.3;  // Use the value from your log
+    const float PITCH_OFFSET = -1.2; // Use the value from your log
+    const float ROLL_OFFSET  = .9;  // Use the value from your log
 
     // Define your filter strength (a value between 0 and 1)
     // A larger value means more smoothing but more "lag".
@@ -138,7 +138,7 @@ void app_main(void) {
             double lr_response = calculateLR(filtered_s);
             // (10 loops * 100ms = 1000ms = 1 print per second)
             //motor_driver_set_speed(&motor_handle, (int8_t)fb_response);
-        
+            
             // Log BNO055 data with calibration status
             ESP_LOGI(TAG, "t=%u ax=%.3f ay=%.3f az=%.3f m/s^2 | gx=%.3f gy=%.3f gz=%.3f rad/s | mx=%.1f my=%.1f mz=%.1f μT | r=%.1f p=%.1f y=%.1f° | cal=%d%d%d%d",
                         (unsigned) s.t_ms, s.ax, s.ay, s.az, s.gx, s.gy, s.gz, 
@@ -172,7 +172,7 @@ void app_main(void) {
             ESP_LOGW(TAG, "BNO055 read failed: %s", esp_err_to_name(err));
         }
 
-        vTaskDelayUntil(&t0, pdMS_TO_TICKS(100));
+        vTaskDelayUntil(&t0, pdMS_TO_TICKS(1000));
     }
 
 }
