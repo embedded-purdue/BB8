@@ -7,6 +7,7 @@
 #include "esp_system.h"
 
 #include "motor_driver.h"
+#include "omniwheel_motor_system.h"
 #include "uni.h"
 
 // BTstack includes for proper initialization
@@ -14,23 +15,28 @@
 #include <btstack_run_loop.h>
 #include <btstack_stdio_esp32.h>
 #include "sdkconfig.h"
+#include "esp_bt.h"
 
 static const char *TAG = "APP";
 
-// ============================================================================
-// BODY MOTOR CONTROL (Controller-Based)
-// ============================================================================
-// This branch controls the body motor using Xbox controller input.
-// When merged to main, this will work alongside the head motor (IMU-based)
-// which uses separate GPIO pins and motor driver instance.
-// ============================================================================
+    // ============================================================================
+    // BB8 OMNIWHEEL MOTOR SYSTEM (Controller-Based)
+    // ============================================================================
+    // Controls 4 omniwheel motors in diamond configuration for BB8 body movement.
+    // Currently only 2 motors are connected (front two), but system supports all 4.
+    // Diamond configuration for BB8 omniwheel system:
+    //   Motor 0 (A): Front-Right - 45 degrees, formula: (y + x + r)
+    //   Motor 1 (B): Front-Left - 135 degrees, formula: (y - x + r) [FIXED: all motors use +r]
+    //   Motor 2 (C): Back-Left - 225 degrees, formula: (-y - x + r)
+    //   Motor 3 (D): Back-Right - 315 degrees, formula: (-y + x + r)
+    // ============================================================================
 
-// Body motor driver handle (for controller-based movement)
-static motor_driver_handle_t body_motor_handle;
+// Omniwheel system handle
+static omniwheel_system_handle_t omniwheel_handle;
 
 // Controller state
 static bool controller_connected = false;
-static SemaphoreHandle_t body_motor_mux = NULL;
+static SemaphoreHandle_t omniwheel_mux = NULL;
 
 // Bluepad32 platform callbacks
 static void bb8_platform_init(int argc, const char** argv) {
@@ -65,26 +71,33 @@ static void bb8_platform_on_device_connected(uni_hid_device_t* d) {
     ESP_LOGI(TAG, "CONTROLLER CONNECTED!");
     ESP_LOGI(TAG, "========================================");
     controller_connected = true;
-    // Ensure motor is stopped when controller connects
-    motor_driver_stop(&body_motor_handle);
+    // Stop scanning and disallow new incoming connections to reduce RF churn
+    uni_bt_stop_scanning_safe();
+    uni_bt_allow_incoming_connections(false);
+    // Ensure all motors are stopped when controller connects
+    omniwheel_system_stop(&omniwheel_handle);
 }
 
 static void bb8_platform_on_device_disconnected(uni_hid_device_t* d) {
     ARG_UNUSED(d);
     ESP_LOGI(TAG, "Controller disconnected");
     controller_connected = false;
-    // Stop body motor when controller disconnects
-    motor_driver_stop(&body_motor_handle);
+    // Stop all motors when controller disconnects
+    omniwheel_system_stop(&omniwheel_handle);
+    // Resume scanning to allow reconnection
+    uni_bt_allow_incoming_connections(true);
+    uni_bt_start_scanning_and_autoconnect_safe();
 }
 
 static uni_error_t bb8_platform_on_device_ready(uni_hid_device_t* d) {
     ARG_UNUSED(d);
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "CONTROLLER READY!");
-    ESP_LOGI(TAG, "Use LEFT JOYSTICK Y-axis to control body motor:");
-    ESP_LOGI(TAG, "  - Push UP    = Forward (increases with deflection)");
-    ESP_LOGI(TAG, "  - Push DOWN  = Backward (increases with deflection)");
-    ESP_LOGI(TAG, "  - Center     = Stop");
+    ESP_LOGI(TAG, "BB8 Omniwheel Control:");
+    ESP_LOGI(TAG, "  - RIGHT JOYSTICK X = Rotation/Direction (left/right)");
+    ESP_LOGI(TAG, "  - LEFT JOYSTICK Y = Forward/Backward speed");
+    ESP_LOGI(TAG, "    * Push UP (positive Y) = Forward");
+    ESP_LOGI(TAG, "    * Push DOWN (negative Y) = Backward");
     ESP_LOGI(TAG, "========================================");
     return UNI_ERROR_SUCCESS;
 }
@@ -113,67 +126,91 @@ static void motor_control_task(void *pvParameters) {
     uni_gamepad_t* gp = &ctl->gamepad;
     
     // ========================================================================
-    // BODY MOTOR CONTROL: Map left joystick Y-axis to body motor speed
+    // OMNIWHEEL CONTROL: Map joysticks to omniwheel velocities
     // ========================================================================
-    // Xbox controller axis_y ranges:
-    //   -512 (full UP) to +511 (full DOWN), 0 = centered
-    // We invert so: UP (raw=-512) → +512 → forward, DOWN (raw=+511) → -511 → backward
-    int32_t axis_y_raw = gp->axis_y;
-    int32_t axis_y = -axis_y_raw;  // Invert: UP becomes positive, DOWN becomes negative
+    // Control scheme for BB8 omniwheel system (based on image formulas):
+    //   - RIGHT JOYSTICK X = Rotation component (vr)
+    //   - LEFT JOYSTICK Y = Forward/Backward component (vy)
+    //   - No strafing for now (vx = 0)
+    // 
+    // The omniwheel kinematics calculate motor speeds for BB8:
+    //   - Motor 0 (A, Front-Right, 45°):  vy + vx + vr = vy + vr (since vx=0)
+    //   - Motor 1 (B, Front-Left, 135°): vy - vx + vr = vy + vr (since vx=0) [FIXED: +vr]
+    //   - Motor 2 (C, Back-Left, 225°):   -vy - vx + vr = -vy + vr (since vx=0)
+    //   - Motor 3 (D, Back-Right, 315°): -vy + vx + vr = -vy + vr (since vx=0)
+    //
+    // This ensures proper behavior:
+    //   - Forward only (vy>0, vr=0): A=vy, B=vy, C=-vy, D=-vy (front forward, back backward)
+    //   - Rotation only (vy=0, vr>0): A=vr, B=vr, C=vr, D=vr (all same direction = rotation)
+    //   - Combined (vy>0, vr>0): All motors contribute without cancellation
+    //
+    // With 2 motors at 45° and 135°:
+    //   - Forward only: Both motors spin forward (vy + vr)
+    //   - Rotation only: Both motors spin same direction (vr) = rotation
+    //   - Combined: Both motors contribute to forward + rotation
+    // ========================================================================
+    // Xbox controller axes range: -512 to +511, 0 = centered
     
     // Dead zone to ignore joystick drift/calibration near center
     const int32_t DEAD_ZONE = 50;  // Ignore movements within ±50 of center (~10% of range)
-    int8_t body_motor_speed = 0;
     
-    // Calculate motor speed only if joystick is outside dead zone
-    if (axis_y > DEAD_ZONE) {
-        // UP pushed: axis_y is positive, motor should go forward (positive speed)
-        // Subtract dead zone and scale
-        int32_t axis_offset = axis_y - DEAD_ZONE;
-        body_motor_speed = (int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
-        if (body_motor_speed > 100) body_motor_speed = 100;
-        if (body_motor_speed < 1) body_motor_speed = 1;  // Minimum forward speed
-    } else if (axis_y < -DEAD_ZONE) {
-        // DOWN pushed: axis_y is negative, motor should go backward (negative speed)
-        // Add dead zone (make positive) and scale
-        int32_t axis_offset = -(axis_y + DEAD_ZONE);  // Make positive
-        body_motor_speed = -(int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
-        if (body_motor_speed < -100) body_motor_speed = -100;
-        if (body_motor_speed > -1) body_motor_speed = -1;  // Minimum backward speed
-    } else {
-        // Within dead zone: EXPLICITLY set speed to 0
-        body_motor_speed = 0;
+    // No strafing for now (can add later with left joystick Y if needed)
+    int8_t vx = 0;
+    
+    // RIGHT joystick X-axis: Rotation/Direction (vr)
+    // Invert mapping to match expected rotation direction on hardware
+    int32_t axis_rx_raw = gp->axis_rx;
+    int32_t axis_rx = -axis_rx_raw;  // Invert
+    int8_t vr = 0;
+    if (axis_rx > DEAD_ZONE) {
+        int32_t axis_offset = axis_rx - DEAD_ZONE;
+        vr = (int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
+        if (vr > 100) vr = 100;
+        if (vr < 1) vr = 1;
+    } else if (axis_rx < -DEAD_ZONE) {
+        int32_t axis_offset = -(axis_rx + DEAD_ZONE);
+        vr = -(int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
+        if (vr < -100) vr = -100;
+        if (vr > -1) vr = -1;
     }
     
-    // Always apply motor speed (even if 0, to ensure motor stops when centered)
+    // LEFT joystick Y-axis: Forward/Backward speed (vy)
+    // UP = forward, DOWN = backward.
+    int32_t axis_ly_raw = gp->axis_y;  // Left stick Y
+    int32_t axis_ly = -axis_ly_raw;  // Invert: UP becomes positive, DOWN becomes negative
+    int8_t vy = 0;
+    if (axis_ly > DEAD_ZONE) {
+        // Pushed UP: Forward
+        int32_t axis_offset = axis_ly - DEAD_ZONE;
+        vy = (int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
+        if (vy > 100) vy = 100;
+        if (vy < 1) vy = 1;
+    } else if (axis_ly < -DEAD_ZONE) {
+        // Pushed DOWN: Backward
+        int32_t axis_offset = -(axis_ly + DEAD_ZONE);
+        vy = -(int8_t)((axis_offset * 100) / (512 - DEAD_ZONE));
+        if (vy < -100) vy = -100;
+        if (vy > -1) vy = -1;
+    }
+    
+    // Apply omniwheel velocities using proper kinematics
+    // This will work correctly with 2 motors now, and automatically work with 4 motors later
     // Use non-blocking mutex take with timeout to avoid blocking BTstack
-    if (body_motor_mux != NULL && xSemaphoreTake(body_motor_mux, pdMS_TO_TICKS(5)) == pdTRUE) {
-        static int8_t last_applied_speed = 127;  // Track last applied speed to avoid redundant calls
+    if (omniwheel_mux != NULL && xSemaphoreTake(omniwheel_mux, pdMS_TO_TICKS(5)) == pdTRUE) {
+        static int8_t last_vx = 127, last_vy = 127, last_vr = 127;
         
-        // Only update if speed actually changed
-        if (body_motor_speed != last_applied_speed) {
-            esp_err_t err;
-            if (body_motor_speed == 0) {
-                err = motor_driver_stop(&body_motor_handle);
-            } else {
-                err = motor_driver_set_speed(&body_motor_handle, body_motor_speed);
-            }
+        // Only update if velocities actually changed
+        if (vx != last_vx || vy != last_vy || vr != last_vr) {
+            // Use the omniwheel system's proper kinematics
+            // This calculates the correct speed for each motor based on omniwheel math
+            esp_err_t err = omniwheel_system_set_velocity(&omniwheel_handle, vx, vy, vr);
             
             if (err != ESP_OK) {
-                ESP_LOGW(TAG, "Failed to set body motor speed: %s", esp_err_to_name(err));
+                ESP_LOGW(TAG, "Failed to set omniwheel velocity: %s", esp_err_to_name(err));
             } else {
-                last_applied_speed = body_motor_speed;
-                
-                // Log speed changes (reduced frequency - only when speed changes)
-                if (body_motor_speed > 0) {
-                    ESP_LOGI(TAG, "MOTOR: FORWARD speed=%d%% [joystick raw=%ld]", 
-                           body_motor_speed, axis_y_raw);
-                } else if (body_motor_speed < 0) {
-                    ESP_LOGI(TAG, "MOTOR: BACKWARD speed=%d%% [joystick raw=%ld]", 
-                           body_motor_speed, axis_y_raw);
-                } else {
-                    ESP_LOGI(TAG, "MOTOR: STOPPED [joystick raw=%ld]", axis_y_raw);
-                }
+                last_vx = vx;
+                last_vy = vy;
+                last_vr = vr;
             }
         }
         xSemaphoreGive(body_motor_mux);
@@ -198,6 +235,7 @@ static void motor_control_task(void *pvParameters) {
         }
         
         vTaskDelayUntil(&last_wake_time, period);
+        xSemaphoreGive(omniwheel_mux);
     }
 }
 
@@ -236,6 +274,9 @@ void app_main(void) {
 #endif
 #endif
 
+    // Release BLE controller memory when using BR/EDR only to improve stability
+    esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+
     // Initialize BTstack - MUST be called before uni_init()
     btstack_init();
     ESP_LOGI(TAG, "BTstack initialized");
@@ -248,17 +289,16 @@ void app_main(void) {
     ESP_LOGI(TAG, "Bluepad32 initialized");
 
     // ========================================================================
-    // BODY MOTOR INITIALIZATION (Controller-Based)
+    // OMNIWHEEL SYSTEM INITIALIZATION
     // ========================================================================
-    // NOTE: When merged to main, the head motor (IMU-based) will use
-    //       different GPIO pins and a separate motor_driver_handle_t instance.
-    //       Both motors can coexist and operate independently.
+    // Configure 4-motor omniwheel system in diamond configuration
+    // Currently only 2 motors are connected (front two), but system supports all 4
     // ========================================================================
 
-    // Create mutex for body motor control protection
-    body_motor_mux = xSemaphoreCreateMutex();
-    if (body_motor_mux == NULL) {
-        ESP_LOGE(TAG, "Failed to create body motor control mutex");
+    // Create mutex for omniwheel control protection
+    omniwheel_mux = xSemaphoreCreateMutex();
+    if (omniwheel_mux == NULL) {
+        ESP_LOGE(TAG, "Failed to create omniwheel control mutex");
         return;
     stabilize_init();
 
@@ -333,29 +373,88 @@ void app_main(void) {
         vTaskDelayUntil(&t0, pdMS_TO_TICKS(1000));
     }
 
-    // Configure body motor driver
-    motor_driver_config_t body_motor_config = {
-        .dir_pin = GPIO_NUM_4,        // Body motor direction control pin
-        .pwm_pin = GPIO_NUM_5,        // Body motor PWM control pin
-        .encoder_a_pin = GPIO_NUM_18, // Body motor encoder channel A (optional)
-        .encoder_b_pin = GPIO_NUM_19, // Body motor encoder channel B (optional)
-        .pwm_channel = LEDC_CHANNEL_0, // Body motor PWM channel
-        .pwm_timer = LEDC_TIMER_0,     // Body motor PWM timer
-        .pwm_frequency = 1000,         // 1kHz PWM frequency
-        .max_pwm_duty = 8191          // 13-bit resolution (2^13 - 1)
+    // Configure omniwheel system
+    // CURRENT SETUP: 2 motors only (based on image formulas)
+    //   - Motor 0 (A): Front-Right at 45° - formula: (y + x + r)
+    //   - Motor 1 (B): Front-Left at 135° - formula: (y - x + r)
+    // NOTE: Each motor MUST have separate GPIO pins for independent control
+    //       If motors share GPIO pins, they will move together (not independent)
+    // 
+    // Physical positioning: Place motors at 45° and 135° angles (front-right and front-left)
+    omniwheel_system_config_t omniwheel_config = {
+        .pwm_frequency = 1000,   // 1kHz PWM frequency
+        .max_pwm_duty = 8191,    // 13-bit resolution (2^13 - 1)
+        .motors = {
+            // Motor 0 (A): Front-Right - 45 degrees
+            // Formula: (y + x + r) - contributes to forward, right strafe, and rotation
+            {
+                .dir_pin = GPIO_NUM_4,        // Direction pin - MUST be unique
+                .pwm_pin = GPIO_NUM_5,        // PWM pin - MUST be unique
+                .encoder_a_pin = GPIO_NUM_18, // Encoder A (optional)
+                .encoder_b_pin = GPIO_NUM_19, // Encoder B (optional)
+                .pwm_channel = LEDC_CHANNEL_0,
+                .pwm_timer = LEDC_TIMER_0,
+                .enabled = true  // Connected - Motor A (Front-Right)
+            },
+            // Motor 1 (B): Front-Left - 135 degrees
+            // Formula: (y - x + r) - contributes to forward, left strafe, and rotation
+            {
+                .dir_pin = GPIO_NUM_12,  // Available GPIO on ESP32-WROOM DevKit C
+                .pwm_pin = GPIO_NUM_13,  // Available GPIO on ESP32-WROOM DevKit C
+                .encoder_a_pin = GPIO_NUM_NC,
+                .encoder_b_pin = GPIO_NUM_NC,
+                .pwm_channel = LEDC_CHANNEL_1,
+                .pwm_timer = LEDC_TIMER_1,
+                .enabled = true  // Connected - Motor B (Front-Left)
+            },
+            // Motor 2 (C): Back-Left - 225 degrees
+            // Formula: (-y - x + r) - contributes to backward, left strafe, and rotation
+            {
+                .dir_pin = GPIO_NUM_14,  // Available GPIO on ESP32-WROOM DevKit C
+                .pwm_pin = GPIO_NUM_15,  // Available GPIO on ESP32-WROOM DevKit C
+                .encoder_a_pin = GPIO_NUM_NC,
+                .encoder_b_pin = GPIO_NUM_NC,
+                .pwm_channel = LEDC_CHANNEL_2,
+                .pwm_timer = LEDC_TIMER_2,
+                .enabled = false  // Not yet connected - Motor C (Back-Left)
+            },
+            // Motor 3 (D): Back-Right - 315 degrees
+            // Formula: (-y + x + r) - contributes to backward, right strafe, and rotation
+            {
+                .dir_pin = GPIO_NUM_16,  // Available GPIO on ESP32-WROOM DevKit C
+                .pwm_pin = GPIO_NUM_17,  // Available GPIO on ESP32-WROOM DevKit C
+                .encoder_a_pin = GPIO_NUM_NC,
+                .encoder_b_pin = GPIO_NUM_NC,
+                .pwm_channel = LEDC_CHANNEL_3,
+                .pwm_timer = LEDC_TIMER_3,
+                .enabled = false  // Not yet connected - Motor D (Back-Right)
+            }
+        }
     };
     
-    // Initialize body motor driver
-    ESP_ERROR_CHECK(motor_driver_init(&body_motor_config, &body_motor_handle));
-    ESP_LOGI(TAG, "Body motor driver initialized");
+    // Initialize omniwheel system
+    ESP_ERROR_CHECK(omniwheel_system_init(&omniwheel_config, &omniwheel_handle));
+    ESP_LOGI(TAG, "Omniwheel system initialized");
 
-    // Explicitly stop motor at startup
-    motor_driver_stop(&body_motor_handle);
-    ESP_LOGI(TAG, "Body motor explicitly stopped - waiting for controller connection...");
-    ESP_LOGI(TAG, "When connected, use left joystick Y-axis to control body motor");
-    ESP_LOGI(TAG, "  - Push joystick UP = forward (positive speed)");
-    ESP_LOGI(TAG, "  - Push joystick DOWN = backward (negative speed)");
-    ESP_LOGI(TAG, "  - Center joystick = stop");
+    // Explicitly stop all motors at startup
+    omniwheel_system_stop(&omniwheel_handle);
+    ESP_LOGI(TAG, "All motors stopped - waiting for controller connection...");
+    ESP_LOGI(TAG, "CURRENT SETUP: 2-Motor Mode (Based on Image Formulas)");
+    ESP_LOGI(TAG, "  - Motor 0 (A): Front-Right at 45° - GPIO 4 (dir), GPIO 5 (PWM)");
+    ESP_LOGI(TAG, "    Formula: (y + x + r) - Forward + Right + Rotation");
+    ESP_LOGI(TAG, "  - Motor 1 (B): Front-Left at 135° - GPIO 12 (dir), GPIO 13 (PWM)");
+    ESP_LOGI(TAG, "    Formula: (y - x + r) - Forward - Right + Rotation");
+    ESP_LOGI(TAG, "FUTURE SETUP: 4-Motor Mode (when C and D are connected)");
+    ESP_LOGI(TAG, "  - Motor 2 (C): Back-Left at 225° - GPIO 14 (dir), GPIO 15 (PWM)");
+    ESP_LOGI(TAG, "    Formula: (-y - x + r) - Backward - Right + Rotation");
+    ESP_LOGI(TAG, "  - Motor 3 (D): Back-Right at 315° - GPIO 16 (dir), GPIO 17 (PWM)");
+    ESP_LOGI(TAG, "    Formula: (-y + x + r) - Backward + Right + Rotation");
+    ESP_LOGI(TAG, "When connected:");
+    ESP_LOGI(TAG, "  - RIGHT JOYSTICK X = Rotation component (vr)");
+    ESP_LOGI(TAG, "  - LEFT JOYSTICK Y = Forward/Backward component (vy)");
+    ESP_LOGI(TAG, "    * Push UP = Forward");
+    ESP_LOGI(TAG, "    * Push DOWN = Backward");
+    ESP_LOGI(TAG, "NOTE: Position motors at 45° (A), 135° (B), 225° (C), 315° (D) angles");
     
     // Start BTstack run loop (this blocks forever - controller callbacks run in BTstack context)
     // This must be called after all initialization
