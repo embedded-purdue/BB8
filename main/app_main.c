@@ -36,7 +36,7 @@ static omniwheel_system_handle_t omniwheel_handle;
 
 // Controller state
 static bool controller_connected = false;
-static SemaphoreHandle_t omniwheel_mux = NULL;
+static SemaphoreHandle_t omniwheel_mux = NULL; // this is a lock so there is no race condition
 
 // Bluepad32 platform callbacks
 static void bb8_platform_init(int argc, const char** argv) {
@@ -296,11 +296,11 @@ void app_main(void) {
     // ========================================================================
 
     // Create mutex for omniwheel control protection
-    omniwheel_mux = xSemaphoreCreateMutex();
+    omniwheel_mux = xSemaphoreCreateMutex(); // this is a lock so only one thread/process/controller can control the motor at once. Same as a thread lock
     if (omniwheel_mux == NULL) {
         ESP_LOGE(TAG, "Failed to create omniwheel control mutex");
         return;
-    stabilize_init();
+    stabilize_init(); // Initilizes PID values 
 
     ESP_LOGI(TAG, "All systems initialized, starting real-time IMU streaming and motor control");
 
@@ -311,7 +311,7 @@ void app_main(void) {
     const TickType_t period = pdMS_TO_TICKS(20); // 50Hz sampling (reduced for BNO055 stability)
 
     int print_counter = 0;
-    while (1) {
+    while (1) { // infinite loop running 
         bno055_sample_t s;
         esp_err_t err = bno055_read_sample(I2C_NUM_0, BNO055_ADDR_A, &s);
 
@@ -372,6 +372,13 @@ void app_main(void) {
 
         vTaskDelayUntil(&t0, pdMS_TO_TICKS(1000));
     }
+
+
+
+
+    /// CODE UNDER HERE DOESNT RUN IM PRETTY SURE BECAUSE IT IS UNDER THE INFINITE LOOP --------------------------------------------
+
+
 
     // Configure omniwheel system
     // CURRENT SETUP: 2 motors only (based on image formulas)
